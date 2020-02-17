@@ -1,6 +1,6 @@
 # pyDERCalc
 
-This repository contains Python script for evaluating the performance of speaker diarization systemsin the pyDERCalc.py file along with a demo Jupyter notebook and example files.  It is designed to (a) be give more flexibility on forgiveness collars to be inserted, and anticipates potentially different utterance start collar sizes and utterance end collar sizes, and (b) enable variations to the code to be made more easily to test different things.
+This repository contains Python script for evaluating the performance of speaker diarization systems in the pyDERCalc.py file along with a demo Jupyter notebook and example files.  It is designed to (a) be give more flexibility on forgiveness collars to be inserted, and anticipates potentially different utterance start collar sizes and utterance end collar sizes, and (b) enable variations to the code to be made more easily to test different things.
 
 pyDERCalc does not permit segments to be excluded (i.e. no unpartitioned evaluations maps (UEM) files), but can otherwise be used to replicate the industry standard diarization evaluation tool ``md-eval.pl`` (Version 22).  That code is part of the NIST scoring toolkit (``sctk-2.4.10``) available at <ftp://jaguar.ncsl.nist.gov/pub/sctk-2.4.10-20151007-1312.tar.bz2>, and also set out in this repository for easy comparison.  It is described in detail in NIST, “The 2009 (RT-09) rich transcription meeting recognition evaluation plan,” Feb. 2009.
 
@@ -31,7 +31,7 @@ See ``demo.ipynb`` notebook for examples on how to use pyDERCalc.  The main step
 
 ## Explanation
 
-The .rttm files are were devised by NIST for the Rich Transcription challenges that ran from 2002 to 2009.  RTTM stands for rich transcription time-marked files, and are essentially text files setting out each speaker segment on one line.  Each line has either 9 or 10 space-separated entries, which are put into a Python list using getSegs(rttmFile).
+The .rttm files are were devised by NIST for the Rich Transcription challenges that ran from 2002 to 2009.  RTTM stands for Rich Transcription Time-marked Files, and are essentially text files setting out each speaker segment on one line.  Each line has either 9 or 10 space-separated entries, which are put into a Python list using getSegs(rttmFile).
 
 Start of ``AMI_20050204-1206_GroundTruth.rttm``:
 "SPEAKER AMI_20050204-1206 1 1270.390 4.490 <NA> <NA> FEE029 <NA>
@@ -42,5 +42,25 @@ Start of ``AMI_20050204-1206_DiarTkOutput.rttm``:
 "SPEAKER AMI_20050204-1206 1 1270.39 4.50 <NA> <NA> AMI_20050204-1206_spkr_0 <NA>
 SPEAKER AMI_20050204-1206 1 1275.19 3.08 <NA> <NA> AMI_20050204-1206_spkr_0 <NA>
 ..."
+
+The functions ``getSplitSegs(segs)`` and ``iterateSplitSegs(segs)`` are used to find non-overlapping segments that have the same speakers throughout each segment.
+
+The functions ``getComboSplitSegs(segs)`` and ``iterateComboSplitSegs(comboSegs)`` are used to combine the ground truth and diarization system segments to show what speakers are predicted for specific segments by the ground truth files and the diarization system files.  These can then be compared using 
+
+``getDiarizedSpkrs(comboSplitSegs)``
+``getSpkrTimes(lstOracleSpkrs, lstDiarizedSpkrs, comboSplitSegs)``
+``getMapSpkrs(lstOracleSpkrs, dfSpkrTimes)``
+``getSegsIgnore(oracleSplitSegs, collars)``
+``getNewSegsIgnore(segsIgnore, collars)``
+``getRevisedComboSplitSegs(comboSplitSegs, newSegsIgnore)``
+``getTotalTime(segs, countMultipleSpkrs=True)``
+``getMissedTime(segs)``
+``getFalarmTime(segs)``
+``getErrorTime(segs, mapSpkrs)``
+``getCollarSegs(comboSplitSegs, newSegsIgnore)``
+``getErrors(revisedComboSplitSegs, mapSpkrs, collars)``
+``getSBDERs(allCollarSegs, mapSpkrs, collars)``
+``getAllErrors(oracleRttmFile, diarizedRttmFile, collars)``
+
 
 COMPLETE
