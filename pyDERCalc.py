@@ -1,15 +1,5 @@
 # These are functions used in the calculation of speaker diarization error rates (DERs)
 
-import time
-class Timer:
-    def __init__(self):
-        self.time = time.time()
-
-    def lap(self, name):
-        now = time.time()
-        print(f"{name} {now - self.time}")
-        self.time = now
-
 def getSegs(rttmFile, oracle):
     """
     This function gets the segment start times, segment end times, segment durations and identified/allocated speakers
@@ -20,7 +10,8 @@ def getSegs(rttmFile, oracle):
     -rttmFile: path + filename of RTTM file in standard NIST format, form "AMI_20050204-1206.rttm"
 
     Outputs:
-    - segs: list of segments in form "[[start time 1, end time 1, duration 1, speaker 1], [...]]"
+    - segs: list of segments, where each segment is in dictionary format, form 
+      "[{start time 1, end time 1, duration 1, {oracle speaker 1, diarization speaker 1}}, {...}]"
     """
     import sys
     segs = []
@@ -34,6 +25,7 @@ def getSegs(rttmFile, oracle):
                 else:
                     segs.append({'tbeg': float(tbeg), 'tend': round(float(tbeg) + float(tdur), 3),
                                  'name': {'oname': [], 'dname': [name]}})
+        segs.sort(key=lambda x:x['tbeg'])
         return segs
     except Exception as e:
         print("You must use RTTM files in the right format.")
@@ -47,7 +39,8 @@ def countOverlaps(array):
     functions to determine when to stop.
 
     Input:
-    - array: list of segments, form "[[start time 1, end time 1, duration 1, speaker 1], [...]]"
+    - array: list of segments, where each segment is in dictionary format, form 
+      "[{start time 1, end time 1, duration 1, {oracle speaker 1, diarization speaker 1}}, {...}]"
 
     Outputs:
     - count: single number showing number of consecutive row overlaps
@@ -69,7 +62,8 @@ def getSplitSegs(segs):
     to 0.
 
     Inputs:
-    - segs: list of segments, form "[[start time 1, end time 1, duration 1, speaker 1], [...]]"
+    - segs: list of segments, where each segment is in dictionary format, form 
+      "[{start time 1, end time 1, duration 1, {oracle speaker 1, diarization speaker 1}}, {...}]"
 
     Outputs:
     - splitSegs: revised list of segments that over one pass splits consecutive overlapping rows into multiple rows with
