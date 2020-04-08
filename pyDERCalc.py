@@ -1,6 +1,16 @@
 # These are functions used in the calculation of speaker diarization error rates (DERs)
 
-def getSegs(rttmFile):
+import time
+class Timer:
+    def __init__(self):
+        self.time = time.time()
+
+    def lap(self, name):
+        now = time.time()
+        print(f"{name} {now - self.time}")
+        self.time = now
+
+def getSegs(rttmFile, oracle):
     """
     This function gets the segment start times, segment end times, segment durations and identified/allocated speakers
     from an RTTM file and returns it as a list of segments.  Used for obtaining both ground truth segments and
@@ -17,9 +27,13 @@ def getSegs(rttmFile):
     try:
         with open(str(rttmFile), "r") as f:
             for line in f:
-                lineItems = line.split()
-                segs.append([float(lineItems[3]), round(float(lineItems[3]) + float(lineItems[4]), 3), [lineItems[7]]])
-        segs.sort(key=lambda x:x[0])
+                type, file, chnl, tbeg, tdur, ortho, stype, name, conf = line.split()
+                if oracle:
+                    segs.append({'tbeg': float(tbeg), 'tend': round(float(tbeg) + float(tdur), 3),
+                                 'name': {'oname': [name], 'dname': []}})
+                else:
+                    segs.append({'tbeg': float(tbeg), 'tend': round(float(tbeg) + float(tdur), 3),
+                                 'name': {'oname': [], 'dname': [name]}})
         return segs
     except Exception as e:
         print("You must use RTTM files in the right format.")
@@ -40,10 +54,13 @@ def countOverlaps(array):
     """
     count = 0
     for i in range(len(array) - 1):
-        if array[i][1] > array[i+1][0]:
-            count += 1
+        if len(array[i]) == 2:
+            if array[i][1] > array[i+1][0]:
+                count += 1
+        else:
+            if array[i]['tend'] > array[i+1]['tbeg']:
+                count += 1
     return count
-
 
 def getSplitSegs(segs):
     """
@@ -58,186 +75,38 @@ def getSplitSegs(segs):
     - splitSegs: revised list of segments that over one pass splits consecutive overlapping rows into multiple rows with
                  a constant number of speakers in each segment
     """
+
+    events = []
+    for index, seg in enumerate(segs):
+        events.append({'time': seg['tbeg'], 'type': 'beg', 'seg': index})
+        events.append({'time': seg['tend'], 'type': 'end', 'seg': index})
+
+    events.sort(key=lambda e: e['time'])
+
     splitSegs = []
-    # The jump is needed to avoid double counting rows that have already been combined with the previous one
-    jump = False
-    for i in range(len(segs) - 1):
+    active_segs = set()
+    last_event = None
+    for event in events:
+        seg_index = event['seg']
 
-        if segs[i][0] < segs[i+1][0] and jump == False:
-            if segs[i][1] <= segs[i+1][0]:
-                splitSegs.append(segs[i])
-            elif segs[i][1] > segs[i+1][0] and segs[i][1] < segs[i+1][1]:
-                splitSegs.append([segs[i][0], segs[i+1][0], segs[i][2]])
-                splitSegs.append([segs[i+1][0], segs[i][1], segs[i][2] + segs[i+1][2]])
-                splitSegs.append([segs[i][1], segs[i+1][1], segs[i+1][2]])
-                jump = True
-            elif segs[i][1] > segs[i+1][0] and segs[i][1] > segs[i+1][1]:
-                splitSegs.append([segs[i][0], segs[i+1][0], segs[i][2]])
-                splitSegs.append([segs[i+1][0], segs[i+1][1], segs[i][2] + segs[i+1][2]])
-                splitSegs.append([segs[i+1][1], segs[i][1], segs[i][2]])
-                jump = True
-            elif segs[i][1] > segs[i+1][0] and segs[i][1] == segs[i+1][1]:
-                splitSegs.append([segs[i][0], segs[i+1][0], segs[i][2]])
-                splitSegs.append([segs[i+1][0], segs[i+1][1], segs[i][2] + segs[i+1][2]])
-                jump = True
-            else:
-                print("Some error has occurred: {} {}".format(segs[i], segs[i+1]))
+        if active_segs:
+            beg_time = last_event['time']
+            end_time = event['time']
+            splitSegs.append({'tbeg': beg_time, 'tend': end_time,
+                              'name': {name_type: sum([segs[x]['name'][name_type] for x in active_segs], []) for
+                                       name_type in ['oname', 'dname']}})
 
-        elif segs[i][0] == segs[i+1][0] and jump == False:
-            if segs[i][1] < segs[i+1][1]:
-                splitSegs.append([segs[i][0], segs[i][1], segs[i][2] + segs[i+1][2]])
-                splitSegs.append([segs[i][1], segs[i+1][1], segs[i+1][2]])
-                jump = True
-            elif segs[i][1] == segs[i+1][1]:
-                splitSegs.append([segs[i][0], segs[i][1], segs[i][2] + segs[i+1][2]])
-                jump = True
-            elif segs[i][1] > segs[i+1][1]:
-                splitSegs.append([segs[i][0], segs[i+1][1], segs[i][2] + segs[i+1][2]])
-                splitSegs.append([segs[i+1][1], segs[i][1], segs[i][2]])
-                jump = True
-            else:
-                print("Some weird error has occurred") 
-        elif jump == True:
-            jump = False
-        else:
-            print("A sorting error has occurred")
-    # Add last row if not incorporated into previous one
-    if jump == False:
-        splitSegs.append(segs[-1])
-            
-    splitSegs.sort(key=lambda x:x[0])
-    return splitSegs
+        if event['type'] == 'beg':
+            active_segs.add(seg_index)
 
+        if event['type'] == 'end':
+            active_segs.remove(seg_index)
 
-def iterateSplitSegs(segs):
-    """
-    This function runs iterateSplitSegs(segs) until countOverlaps(segs) is 0.  It returns the number of iterations
-    and the list of split segments.
-
-    Inputs:
-    - segs: list of segments, form "[[start time 1, end time 1, duration 1, speaker 1], [...]]"
-
-    Outputs:
-    - count: number of iterations carried out, form "3"
-    - splitSegs: revised list of segments after all iterations have reduced it to non-overlapping segments with a
-                 constant number of speakers in each segment 
-    """
-    if countOverlaps(segs) != 0:  
-        splitSegs = getSplitSegs(segs)
-        count = 1
-        while countOverlaps(splitSegs) != 0:
-            splitSegs = getSplitSegs(splitSegs)
-            count += 1
-        return count, splitSegs
-    # If there are no overlaps in the first place
-    else:
-        return 0, segs
-
-
-def getComboSplitSegs(segs):
-    """
-    This function takes a single list that contains both the ground truth segments and the diarization system
-    segments sorted by start time and identifies which speakers are speaking in both for non-overlapping segments.
-
-    Inputs:
-    - segs: a combined ground truth segments and diarization system segments file sorted by start time, where
-            the ground truth segments have a blank list in the third row and the diarization system segments
-            have a blank list in the second row
-            form: "[[1270.39, 1274.88, ['FEE029'], []], [1270.39, 1274.89, [], ['AMI_20050204-1206_spkr_0']],"
-
-    Outputs:
-    - splitSegs: the combined list of non-overlapping segments that shows what speakers the ground truth segments and
-                 the diarization system segments identify for the same segments
-    """
-    splitSegs = []
-    # The jump is needed to avoid double counting rows that have already been combined with the previous one
-    jump = False
-
-    # Iterates up to penultimate row - last row can never be combined with a subsequent row, but needs to be added
-    # back at end if not combined with the penultimate row
-    for i in range(len(segs) - 1):
-
-        # First row starts before second
-        if segs[i][0] < segs[i+1][0] and jump == False:
-            if segs[i][1] <= segs[i+1][0]:
-                splitSegs.append(segs[i])
-            elif segs[i][1] > segs[i+1][0] and segs[i][1] < segs[i+1][1]:
-                splitSegs.append([segs[i][0], segs[i+1][0], segs[i][2], segs[i][3]])
-                splitSegs.append([segs[i+1][0], segs[i][1], segs[i][2] + segs[i+1][2], segs[i][3] + segs[i+1][3]])
-                splitSegs.append([segs[i][1], segs[i+1][1], segs[i+1][2], segs[i+1][3]])
-                jump = True
-            elif segs[i][1] > segs[i+1][0] and segs[i][1] > segs[i+1][1]:
-                splitSegs.append([segs[i][0], segs[i+1][0], segs[i][2], segs[i][3]])
-                splitSegs.append([segs[i+1][0], segs[i+1][1], segs[i][2] + segs[i+1][2], segs[i][3] + segs[i+1][3]])
-                splitSegs.append([segs[i+1][1], segs[i][1], segs[i][2], segs[i][3]])
-                jump = True
-            elif segs[i][1] > segs[i+1][0] and segs[i][1] == segs[i+1][1]:
-                splitSegs.append([segs[i][0], segs[i+1][0], segs[i][2], segs[i][3]])
-                splitSegs.append([segs[i+1][0], segs[i+1][1], segs[i][2] + segs[i+1][2], segs[i][3] + segs[i+1][3]])
-                jump = True
-            else:
-                print("Some error has occurred: {} {}".format(segs[i], segs[i+1]))
-
-        # First row starts at same time as second
-        elif segs[i][0] == segs[i+1][0] and jump == False:
-            if segs[i][1] < segs[i+1][1]:
-                splitSegs.append([segs[i][0], segs[i][1], segs[i][2] + segs[i+1][2], segs[i][3] + segs[i+1][3]])
-                splitSegs.append([segs[i][1], segs[i+1][1], segs[i+1][2], segs[i+1][3]])
-                jump = True
-            elif segs[i][1] == segs[i+1][1]:
-                splitSegs.append([segs[i][0], segs[i][1], segs[i][2] + segs[i+1][2], segs[i][3] + segs[i+1][3]])
-                jump = True
-            elif segs[i][1] > segs[i+1][1]:
-                splitSegs.append([segs[i][0], segs[i+1][1], segs[i][2] + segs[i+1][2], segs[i][3] + segs[i+1][3]])
-                splitSegs.append([segs[i+1][1], segs[i][1], segs[i][2], segs[i][3]])
-                jump = True
-            else:
-                print("Some weird error has occurred") 
-        
-        # Skip row if already combined with previous one, but reset jump to start with next one
-        elif jump == True:
-            jump = False
-        
-        # Precautionary error message - the sorting at the end of each iteration should prevent this from activating
-        else:
-            print("A sorting error has occurred")
-    
-    # Add last row if not incorporated into previous one
-    if jump == False:
-        splitSegs.append(segs[-1])
-    
-    # Sort by start time before each iteration
-    splitSegs.sort(key=lambda x:x[0])
+        last_event = event
 
     return splitSegs
 
-
-def iterateComboSplitSegs(comboSegs):
-    """
-    This function runs iterateComboSplitSegs(segs) until countOverlaps(comboSegs) is 0.  It returns the number of iterations
-    and the list of split segments.
-
-    Inputs:
-    - comboSegs: list of segments, form "[[start time 1, end time 1, duration 1, speaker 1], [...]]"
-
-    Outputs:
-    - count: number of iterations carried out, form "3"
-    - comboSplitSegs: revised list of ground truth and diarization segments after all iterations have reduced it to
-                      non-overlapping segments with a constant number of speakers in each segment 
-    """
-    if countOverlaps(comboSegs) != 0:  
-        comboSplitSegs = getComboSplitSegs(comboSegs)
-        count = 1
-        while countOverlaps(comboSplitSegs) != 0:
-            comboSplitSegs = getComboSplitSegs(comboSplitSegs)
-            count += 1
-        return count, comboSplitSegs
-    # If there are no overlaps in the first place
-    else:
-        return 0, comboSegs
-
-
-def getOracleSpkrs(comboSplitSegs):
+def getSpkrs(comboSplitSegs, name_type):
     """
     This function returns the list of ground truth speakers.
 
@@ -248,35 +117,11 @@ def getOracleSpkrs(comboSplitSegs):
     Outputs:
     - lstOracleSpkrs: list of ground truth speakers, form: "['FEE029', 'FEE030', 'MEE031', 'FEE032']"
     """
-    lstOracleSpkrs = []
-    for row in comboSplitSegs:
-        lstOracleSpkrs += row[2]
-    # Reduce to set to remove duplicate speakers, but then put back in list form and sort
-    lstOracleSpkrs = list(set(lstOracleSpkrs))
-    lstOracleSpkrs.sort(key=lambda x:x[-2:])
-    return lstOracleSpkrs
 
+    lstSpkrs =list(set(sum([x['name'][name_type] for x in comboSplitSegs], [])))
+    lstSpkrs.sort(key=lambda x:x[-2:])
 
-def getDiarizedSpkrs(comboSplitSegs):
-    """
-    This function returns the list of diarization system speakers.
-
-    Inputs:
-    - comboSplitSegs: list of ground truth and diarization segments after all iterations have reduced it to
-                      non-overlapping segments with a constant number of speakers in each segment
-
-    Outputs:
-    - lstDiarizedSpkrs: list of diarization system speakers,
-                        form: "['AMI_20050204-1206_spkr_0', 'AMI_20050204-1206_spkr_1', 'AMI_20050204-1206_spkr_3',
-                        'AMI_20050204-1206_spkr_5', 'AMI_20050204-1206_spkr_6', 'AMI_20050204-1206_spkr_9']"
-    """
-    lstDiarizedSpkrs = []
-    for row in comboSplitSegs:
-        lstDiarizedSpkrs += row[3]
-    # Reduce to set to remove duplicate speakers, but then put back in list form and sort
-    lstDiarizedSpkrs = list(set(lstDiarizedSpkrs))
-    lstDiarizedSpkrs.sort(key=lambda x:x[-2:])
-    return lstDiarizedSpkrs
+    return lstSpkrs
 
 
 def getSpkrTimes(lstOracleSpkrs, lstDiarizedSpkrs, comboSplitSegs):
@@ -306,16 +151,9 @@ def getSpkrTimes(lstOracleSpkrs, lstDiarizedSpkrs, comboSplitSegs):
 
     spkrTimes = np.zeros((len(lstOracleSpkrs), len(lstDiarizedSpkrs)))
     for row in comboSplitSegs:
-        if row[3] != []: # Ignore missed segments
-            # Note not using elif as can have more than one speaker in each
-            if lstOracleSpkrs[0] in row[2]:
-                spkrTimes[0][lstDiarizedSpkrs.index(row[3][0])] += round(row[1] - row[0], 3)
-            if lstOracleSpkrs[1] in row[2]:
-                spkrTimes[1][lstDiarizedSpkrs.index(row[3][0])] += round(row[1] - row[0], 3)
-            if lstOracleSpkrs[2] in row[2]:
-                spkrTimes[2][lstDiarizedSpkrs.index(row[3][0])] += round(row[1] - row[0], 3)
-            if lstOracleSpkrs[3] in row[2]:
-                spkrTimes[3][lstDiarizedSpkrs.index(row[3][0])] += round(row[1] - row[0], 3)
+        for OracleSpkr in row['name']['oname']:
+            for DiarizedSpkr in row['name']['dname']:
+                spkrTimes[lstOracleSpkrs.index(OracleSpkr)][lstDiarizedSpkrs.index(DiarizedSpkr)] += round(row['tend'] - row['tbeg'], 3)
 
     dfSpkrTimes = pd.DataFrame(spkrTimes, index=lstOracleSpkrs, columns=lstDiarizedSpkrs)
     return dfSpkrTimes
@@ -373,9 +211,10 @@ def getSegsIgnore(oracleSplitSegs, collars):
     for index, collar in enumerate(collars):
         segsIgnore.append([])
         for row in oracleSplitSegs:
-            segsIgnore[index].append([row[0] - collar[0], row[0] + collar[1]])
-            segsIgnore[index].append([row[1] - collar[0], row[1] + collar[1]])
+            segsIgnore[index].append([row['tbeg'] - collar[0], row['tbeg'] + collar[1]])
+            segsIgnore[index].append([row['tend'] - collar[0], row['tend'] + collar[1]])
     return segsIgnore
+
 
 
 def getNewSegsIgnore(segsIgnore, collars):
@@ -390,35 +229,34 @@ def getNewSegsIgnore(segsIgnore, collars):
     - count: the number of iterations needed to reduce overlaps to 0
     - newSegsIgnore: the revised list of segments to ignore, form: "[[1270.14, 1270.64], [1274.63, 1275.88], ..."
     """
-    newSegsIgnore = segsIgnore.copy()
-    for index, collar in enumerate(collars):
-        count = 0
 
-        while countOverlaps(newSegsIgnore[index]) != 0:
-            jump = False
-            revisedSegsIgnore = []
-            for i in range(len(newSegsIgnore[index]) - 1):
-                if newSegsIgnore[index][i][1] >= newSegsIgnore[index][i+1][1] and jump == False:
-                    revisedSegsIgnore.append([newSegsIgnore[index][i][0], newSegsIgnore[index][i][1]])
-                    jump = True
-                elif newSegsIgnore[index][i][1] >= newSegsIgnore[index][i+1][0] and jump == False:
-                    revisedSegsIgnore.append([newSegsIgnore[index][i][0], newSegsIgnore[index][i+1][1]])
-                    jump = True
-                elif jump == False:
-                    revisedSegsIgnore.append(newSegsIgnore[index][i])
-                else:
-                    jump = False
+    newSegsIgnore = [[] for i in range(len(collars))]
+    for collar_index, collar in enumerate(collars):
 
-            if jump == False:
-                revisedSegsIgnore.append(newSegsIgnore[index][-1])
-            else:
-                jump == False
+        events = []
+        for index, seg in enumerate(segsIgnore[collar_index]):
+            events.append({'time': seg[0], 'type': 'beg', 'index': index})
+            events.append({'time': seg[1], 'type': 'end', 'index': index})
 
-            revisedSegsIgnore.sort(key=lambda x:x[0])
-            newSegsIgnore[index] = revisedSegsIgnore
-            count += 1
+        events.sort(key=lambda e: e['time'])
 
-    return count, newSegsIgnore
+        active_segs = set()
+        last_event = None
+        for event in events:
+
+            if event['type'] == 'beg':
+                if len(active_segs) == 0:
+                    last_event = event
+                active_segs.add(event['index'])
+
+            if event['type'] == 'end':
+                active_segs.remove(event['index'])
+                if len(active_segs) == 0:
+                    beg_time = last_event['time']
+                    end_time = event['time']
+                    newSegsIgnore[collar_index].append([beg_time, end_time])
+
+    return newSegsIgnore
 
 
 def getRevisedComboSplitSegs(comboSplitSegs, newSegsIgnore):
@@ -439,21 +277,21 @@ def getRevisedComboSplitSegs(comboSplitSegs, newSegsIgnore):
 
     for row in newSegsIgnore:
         for j in range(len(segs)):
-            if row[0] <= segs[j][0] and row[1] >= segs[j][1]:
-                segs[j] = [0, 0, 0, 0]
-            elif row[0] <= segs[j][0] and row[1] > segs[j][0] and row[1] < segs[j][1]:
-                segs[j] = [row[1], segs[j][1], segs[j][2], segs[j][3]]
-            elif row[0] > segs[j][0] and row[0] < segs[j][1] and row[1] >= segs[j][1]:
-                segs[j] = [segs[j][0], row[0], segs[j][2], segs[j][3]]
-            elif row[0] > segs[j][0] and row[0] < segs[j][1] and row[1] < segs[j][1]:
-                segs[j] = [segs[j][0], row[0], segs[j][2], segs[j][3]]
-                newRows.append([row[1], segs[j][1], segs[j][2], segs[j][3]])
+            if row[0] <= segs[j]['tbeg'] and row[1] >= segs[j]['tend']:
+                segs[j] = {'tbeg': 0, 'tend': 0, 'name': {'oname': [], 'dname': []}}
+            elif row[0] <= segs[j]['tbeg'] and row[1] > segs[j]['tbeg'] and row[1] < segs[j]['tend']:
+                segs[j] = {'tbeg': row[1], 'tend': segs[j]['tend'], 'name': segs[j]['name']}
+            elif row[0] > segs[j]['tbeg'] and row[0] < segs[j]['tend'] and row[1] >= segs[j]['tend']:
+                segs[j] = {'tbeg': segs[j]['tbeg'], 'tend': row[0], 'name': segs[j]['name']}
+            elif row[0] > segs[j]['tbeg'] and row[0] < segs[j]['tend'] and row[1] < segs[j]['tend']:
+                segs[j] = {'tbeg': segs[j]['tbeg'], 'tend': row[0], 'name': segs[j]['name']}
+                newRows.append({'tbeg': row[1], 'tend': segs[j]['tend'], 'name': segs[j]['name']})
 
     segs = segs + newRows
-    segs.sort(key=lambda x:x[0])
+    segs.sort(key=lambda x:x['tbeg'])
 
     for i in reversed(range(len(segs))):
-        if segs[i] == [0, 0, 0, 0]:
+        if segs[i] == {'tbeg': 0, 'tend': 0, 'name': {'oname': [], 'dname': []}}:
             del segs[i]
 
     return segs
@@ -476,9 +314,9 @@ def getTotalTime(segs, countMultipleSpkrs=True):
     time = 0
     for row in segs:
         if countMultipleSpkrs == False:
-            time += row[1] - row[0]
+            time += row['tend'] - row['tbeg']
         else:
-            time += (row[1] - row[0]) * len(row[2])
+            time += (row['tend'] - row['tbeg']) * len(row['name']['oname'])
     #time = round(time, 3)
     return time
 
@@ -496,11 +334,11 @@ def getMissedTime(segs):
     missedTime = 0
     for row in segs:
         # No speaker identified
-        if row[2] != [] and row[3] == []:
-            missedTime += row[1] - row[0]
+        if row['name']['oname'] != [] and row['name']['dname'] == []:
+            missedTime += row['tend'] - row['tbeg']
         # More than one oracle speaker mapped to only one speaker
-        if len(row[2]) > 1:
-            missedTime += (len(row[2])-1) * (row[1] - row[0])
+        if len(row['name']['oname']) > 1:
+            missedTime += (len(row['name']['oname'])-1) * (row['tend'] - row['tbeg'])
 
     #round(missedTime, 3)
     return missedTime
@@ -518,8 +356,8 @@ def getFalarmTime(segs):
     """
     falarmTime = 0
     for row in segs:
-        if row[2] == [] and row[3] != []:
-            falarmTime += row[1] - row[0]
+        if row['name']['oname'] == [] and row['name']['dname'] != []:
+            falarmTime += row['tend'] - row['tbeg']
     #falarmTime = round(falarmTime, 3)
     return falarmTime
 
@@ -545,17 +383,17 @@ def getErrorTime(segs, mapSpkrs):
     errorTime = 0
     for row in segs:
         # Ignore rows where no speakers identified by either ground truth and diarization system
-        if row[2] != [] and row[3] != []:
+        if row['name']['oname'] != [] and row['name']['dname'] != []:
             hit = False
             # Look at all ground truth speakers identified
-            for i in range(len(row[2])):
+            for i in range(len(row['name']['oname'])):
                 # If any of the ground truth speakers are mapped to the diarization system speaker, then there is no error
-                if mapSpkrs[row[2][i]][0] in row[3]:
+                if mapSpkrs[row['name']['oname'][i]][0] in row['name']['dname']:
                     hit = True
             # If none of the ground truth speakers are mapped to the diarization system speaker, then there is an error
             # and the time is added to errorTime
             if hit == False:
-                errorTime += row[1] - row[0]
+                errorTime += row['tend'] - row['tbeg']
     #errorTime = round(errorTime, 3)
     return errorTime
 
@@ -579,16 +417,16 @@ def getCollarSegs(comboSplitSegs, newSegsIgnore):
     # Using newSegsIgnore as before, but this time taking the portions within them
     for row in newSegsIgnore:
         for j in range(len(segs)):
-            if row[0] <= segs[j][0] and row[1] >= segs[j][1]:
+            if row[0] <= segs[j]['tbeg'] and row[1] >= segs[j]['tend']:
                 collarSegs.append(segs[j])
-            elif row[0] <= segs[j][0] and row[1] > segs[j][0] and row[1] < segs[j][1]:
-                collarSegs.append([segs[j][0], row[1], segs[j][2], segs[j][3]])
-            elif row[0] > segs[j][0] and row[0] < segs[j][1] and row[1] >= segs[j][1]:
-                collarSegs.append([row[0], segs[j][1], segs[j][2], segs[j][3]])
-            elif row[0] > segs[j][0] and row[0] < segs[j][1] and row[1] < segs[j][1]:
-                collarSegs.append([row[0], row[1], segs[j][2], segs[j][3]])
+            elif row[0] <= segs[j]['tbeg'] and row[1] > segs[j]['tbeg'] and row[1] < segs[j]['tend']:
+                collarSegs.append({'tbeg': segs[j]['tbeg'], 'tend': row[1], 'name': segs[j]['name']})
+            elif row[0] > segs[j]['tbeg'] and row[0] < segs[j]['tend'] and row[1] >= segs[j]['tend']:
+                collarSegs.append({'tbeg': row[0], 'tend': segs[j]['tend'], 'name': segs[j]['name']})
+            elif row[0] > segs[j]['tbeg'] and row[0] < segs[j]['tend'] and row[1] < segs[j]['tend']:
+                collarSegs.append({'tbeg': row[0], 'tend': row[1], 'name': segs[j]['name']})
 
-    collarSegs.sort(key=lambda x:x[0])
+    collarSegs.sort(key=lambda x:x['tbeg'])
     return collarSegs
 
 
@@ -714,32 +552,28 @@ def getAllErrors(oracleRttmFile, diarizedRttmFile, collars):
                                                     [250, 250]	38.39	2.69	13.35	54.43"
     
     """
+
     import pandas as pd
-    oracleSegs = getSegs(oracleRttmFile)
-    diarizedSegs = getSegs(diarizedRttmFile)
+    oracleSegs = getSegs(oracleRttmFile, True)
+    diarizedSegs = getSegs(diarizedRttmFile, False)
 
-    oracleCount, oracleSplitSegs = iterateSplitSegs(oracleSegs)
-    diarizedCount, diarizedSplitSegs = iterateSplitSegs(diarizedSegs)
-
-    oracleSplitSegs = [[row[0], row[1], row[2], []] for row in oracleSplitSegs]
-    diarizedSplitSegs = [[row[0], row[1], [], row[2]] for row in diarizedSplitSegs]
+    oracleSplitSegs = getSplitSegs(oracleSegs)
+    diarizedSplitSegs = getSplitSegs(diarizedSegs)
 
     comboSegs = oracleSplitSegs + diarizedSplitSegs
-    comboSegs.sort(key=lambda x:x[0])
+    comboSegs.sort(key=lambda x:x['tbeg'])
 
-    comboSplitSegs = getComboSplitSegs(comboSegs)
-
-    comboCount, comboSplitSegs = iterateComboSplitSegs(comboSegs)
+    comboSplitSegs = getSplitSegs(comboSegs)
 
     dfComboSplitSegs = pd.DataFrame(comboSplitSegs, columns=["Start Time", "End Time", "Oracle Speaker(s)", "Diarized Speaker(s)"])
 
-    lstOracleSpkrs = getOracleSpkrs(comboSplitSegs)
-    lstDiarizedSpkrs = getDiarizedSpkrs(comboSplitSegs)
+    lstOracleSpkrs = getSpkrs(comboSplitSegs, 'oname')
+    lstDiarizedSpkrs = getSpkrs(comboSplitSegs, 'dname')
     dfSpkrTimes = getSpkrTimes(lstOracleSpkrs, lstDiarizedSpkrs, comboSplitSegs)
     mapSpkrs = getMapSpkrs(lstOracleSpkrs, dfSpkrTimes)
 
     segsIgnore = getSegsIgnore(oracleSplitSegs, collars)
-    count, newSegsIgnore = getNewSegsIgnore(segsIgnore, collars)
+    newSegsIgnore = getNewSegsIgnore(segsIgnore, collars)
 
     revisedComboSplitSegs = []
     for index, collar in enumerate(collars):
