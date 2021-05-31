@@ -24,8 +24,6 @@ https://ieeexplore.ieee.org/document/9287552
   doi={10.23919/Eusipco47968.2020.9287552}}
 ```
 
-S. McKnight, A. Hogg, P. Naylor, "Analysis of Phonetic Dependence of Segmentation Errors in Speaker Diarization", EUSIPCO 2020 (submitted).
-
 ## Requirements
 
 - Python 3
