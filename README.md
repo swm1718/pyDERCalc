@@ -10,7 +10,19 @@ The example speaker diarization system segmentation file ``AMI_20050204-1206_Dia
 
 ## Citation
 
-If using pyDERCalc, please cite this paper:
+If using pyDERCalc, please use the following citation:
+https://ieeexplore.ieee.org/document/9287552
+```bibtex
+@INPROCEEDINGS{McKnight2020,
+  author={McKnight, Simon W. and Hogg, Aidan O. T. and Naylor, Patrick A.},
+  booktitle={2020 28th European Signal Processing Conference (EUSIPCO)}, 
+  title={Analysis of Phonetic Dependence of Segmentation Errors in Speaker Diarization}, 
+  year={2021},
+  volume={},
+  number={},
+  pages={381-385},
+  doi={10.23919/Eusipco47968.2020.9287552}}
+```
 
 S. McKnight, A. Hogg, P. Naylor, "Analysis of Phonetic Dependence of Segmentation Errors in Speaker Diarization", EUSIPCO 2020 (submitted).
 
